@@ -2385,7 +2385,9 @@ function SubTab:AddToggle(opts)
         Rotation = 90,
         Enabled = true,
         Name = "UIGradient",
-    },knob)
+    },pill)
+
+    print(Test)
 
     local animation = Test:ApplyAnimation({
         animationType = "Loop",
