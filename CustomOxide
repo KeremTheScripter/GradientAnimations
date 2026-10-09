@@ -2368,6 +2368,36 @@ function SubTab:AddToggle(opts)
     local pillHalo=stroke(pill,C.Accent); pillHalo.Thickness=3.5; pillHalo.Transparency=0.88
     local knob=make("Frame",{Size=UDim2.fromOffset(14,14),AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,2,0.5,0),BackgroundColor3=C.KnobOff,Parent=pill})
     circle(knob)
+
+    local Test = GradientAnimations.new({
+        colorKeypoints = {
+            {0, Color3.fromRGB(255, 226, 60)},
+            {0.5, Color3.fromRGB(255, 251, 202)},
+            {1, Color3.fromRGB(126, 255, 240)},
+        },
+        transparencyKeypoints = {
+            {0, 0},
+        },
+        scaleValue = 2,
+        offsetValue = 0,
+
+        looped = true,
+        Rotation = 90,
+        Enabled = true,
+        Name = "UIGradient",
+    },knob)
+
+    local animation = Test:ApplyAnimation({
+        animationType = "Loop",
+
+        duration = -1,
+        speed = 1,
+        
+        easingSpeed = 1,
+        easingStyle = Enum.EasingStyle.Linear,
+        easingDirection = Enum.EasingDirection.In,
+    })
+
     local function render(a)
         local kp=value and UDim2.new(0,18,0.5,0) or UDim2.new(0,2,0.5,0)
         paint(pill,"BackgroundColor3",value and "Accent" or "Badge",not a)
