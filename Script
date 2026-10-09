@@ -1,3 +1,4 @@
+```lua
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
@@ -52,8 +53,6 @@ local defaults = {
 	},
 }
 
-local activeGradients = {}
-
 export type UIGradientPlusProps = {
 	colorKeypoints: {[number]: {[number]: Color3 | string}}?,
 	transparencyKeypoints: {[number]: {[number]: number}}?,
@@ -65,7 +64,6 @@ export type UIGradientPlusProps = {
 
 	Rotation: number?,
 	Enabled: boolean?,
-
 	Archivable: boolean?,
 	Name: string?,
 }
@@ -79,45 +77,6 @@ export type UIGradientPlusAnimationProps = {
 	easingSpeed: number?,
 	easingStyle: Enum.EasingStyle?,
 	easingDirection: Enum.EasingDirection?,
-}
-
-export type UIGradientPlus = {
-	UIGradient: UIGradient,
-
-	colorKeypoints: {[number]: {Time: number, Value: Color3}},
-	transparencyKeypoints: {[number]: {Time: number, Value: number}},
-
-	offsetValue: number,
-	scaleValue: number,
-
-	_lastOffsetValue: number,
-
-	looped: boolean,
-
-	activeAnimations: {[UIGradientPlusAnimation]: boolean},
-	removingAnimations: {[UIGradientPlusAnimation]: boolean},
-
-	Rotation: number,
-	Enabled: boolean,
-
-	Archivable: boolean,
-	Name: string,
-	Parent: Instance?,
-
-	new: (properties: UIGradientPlusProps, parent: Instance?) -> UIGradientPlus,
-
-	UpdateGradient: (self: UIGradientPlus, deltaTime: number) -> (),
-
-	SetColorKeypoints: (self: UIGradientPlus, colorKeypoints: {[number]: number | Color3 | string}) -> UIGradientPlus,
-	SetTransparencyKeypoints: (self: UIGradientPlus, transparencyKeypoints: {[number]: number}) -> UIGradientPlus,
-
-	ApplyAnimation: (self: UIGradientPlus, properties: UIGradientPlusAnimationProps?, animation: UIGradientPlusAnimation?) -> UIGradientPlusAnimation,
-
-	PauseAnimation: (self: UIGradientPlus, animation: UIGradientPlusAnimation) -> UIGradientPlus,
-	ResumeAnimation: (self: UIGradientPlus, animation: UIGradientPlusAnimation) -> UIGradientPlus,
-	RemoveAnimation: (self: UIGradientPlus, animation: UIGradientPlusAnimation, completeFirst: boolean?) -> UIGradientPlus,
-
-	Destroy: (self: UIGradientPlus) -> (),
 }
 
 export type UIGradientPlusAnimation = {
@@ -143,46 +102,41 @@ export type UIGradientPlusAnimation = {
 
 local UIGradientPlus = {}
 
+local activeGradients = {}
+
+--------------------------------------------------
+-- Utilities
+--------------------------------------------------
+
 local function stringToColor(colorString: string): Color3
 	return defaults.Colors[colorString] or Color3.new(1, 1, 1)
 end
 
-local function shallowCopy(originalTable: {[any]: any}): {[any]: any}
-	local newTable = {}
-
-	for index, value in originalTable do
-		newTable[index] = value
-	end
-
-	return newTable
-end
-
-local function lerpColor(colorOne: Color3, colorTwo: Color3, alpha: number): Color3
+local function lerpColor(
+	colorOne: Color3,
+	colorTwo: Color3,
+	alpha: number
+): Color3
 	return colorOne:Lerp(colorTwo, alpha)
 end
 
-local function lerpNumber(valueOne: number, valueTwo: number, alpha: number): number
+local function lerpNumber(
+	valueOne: number,
+	valueTwo: number,
+	alpha: number
+): number
 	return valueOne + (valueTwo - valueOne) * alpha
 end
 
---[[
-	Reads the user keypoints and prepares them for looping.
+--------------------------------------------------
+-- Keypoints
+--------------------------------------------------
 
-	When looped:
-		- Original keypoints stay in their original range.
-		- A copy is placed one cycle before.
-		- A copy is placed one cycle after.
-
-	This allows processKeypoints() to interpolate smoothly
-	from the last color back into the first color.
-]]
 local function readKeypoints(
-	keypoints: {[number]: {Color3 | string | number}},
-	scale: number,
-	looped: boolean
-): {[number]: {Time: number, Value: Color3 | number}}
-
-	local keypointsTable = {}
+	keypoints,
+	scale: number
+)
+	local result = {}
 
 	scale = math.max(scale, 0.0001)
 
@@ -193,205 +147,270 @@ local function readKeypoints(
 			value = stringToColor(value)
 		end
 
-		table.insert(keypointsTable, {
+		table.insert(result, {
 			Time = keypoint[1] * scale,
 			Value = value,
 		})
 	end
 
-	table.sort(keypointsTable, function(keypointOne, keypointTwo)
-		return keypointOne.Time < keypointTwo.Time
+	table.sort(result, function(a, b)
+		return a.Time < b.Time
 	end)
 
-	if looped and #keypointsTable > 0 then
-		local originalKeypoints = table.clone(keypointsTable)
-
-		-- Previous cycle
-		for _, keypoint in originalKeypoints do
-			table.insert(keypointsTable, {
-				Time = keypoint.Time - scale,
-				Value = keypoint.Value,
-			})
-		end
-
-		-- Next cycle
-		for _, keypoint in originalKeypoints do
-			table.insert(keypointsTable, {
-				Time = keypoint.Time + scale,
-				Value = keypoint.Value,
-			})
-		end
-
-		table.sort(keypointsTable, function(keypointOne, keypointTwo)
-			return keypointOne.Time < keypointTwo.Time
-		end)
-	end
-
-	return keypointsTable
+	return result
 end
 
 local function processKeypoints(
-	keypoints: {[number]: {Time: number, Value: Color3 | number}},
+	keypoints,
 	offset: number,
 	lerpFunction,
 	constructorFunction
-): {[number]: ColorSequenceKeypoint | NumberSequenceKeypoint}
+)
+	local result = {}
 
-	local keypointsTable = {}
+	if #keypoints == 0 then
+		return result
+	end
 
-	local offsetStart = offset
-	local offsetEnd = offset + 1
+	local startTime = offset
+	local endTime = offset + 1
 
-	for index, keypoint in ipairs(keypoints) do
-		local time = keypoint.Time
-		local value = keypoint.Value
+	local first = keypoints[1]
+	local last = keypoints[#keypoints]
 
-		local lastKeypoint = keypoints[index - 1]
+	--------------------------------------------------
+	-- Find first visible point
+	--------------------------------------------------
 
-		-- Create a keypoint exactly at the beginning of the visible range.
-		if lastKeypoint
-			and lastKeypoint.Time < offsetStart
-			and time > offsetStart then
-
-			local alpha =
-				(offsetStart - lastKeypoint.Time)
-				/ (time - lastKeypoint.Time)
-
-			table.insert(
-				keypointsTable,
-				constructorFunction(
-					0,
-					lerpFunction(lastKeypoint.Value, value, alpha)
-				)
+	if startTime <= first.Time then
+		table.insert(
+			result,
+			constructorFunction(
+				0,
+				first.Value
 			)
-		end
+		)
+	else
+		for i = 2, #keypoints do
+			local previous = keypoints[i - 1]
+			local current = keypoints[i]
 
-		-- Add keypoints inside the visible range.
-		if time >= offsetStart and time <= offsetEnd then
-			table.insert(
-				keypointsTable,
-				constructorFunction(
-					time - offsetStart,
-					value
+			if startTime >= previous.Time
+				and startTime <= current.Time then
+
+				local alpha =
+					(startTime - previous.Time)
+					/ (current.Time - previous.Time)
+
+				table.insert(
+					result,
+					constructorFunction(
+						0,
+						lerpFunction(
+							previous.Value,
+							current.Value,
+							alpha
+						)
+					)
 				)
-			)
-		end
 
-		-- Create a keypoint exactly at the end of the visible range.
-		if lastKeypoint
-			and lastKeypoint.Time < offsetEnd
-			and time > offsetEnd then
-
-			local alpha =
-				(offsetEnd - lastKeypoint.Time)
-				/ (time - lastKeypoint.Time)
-
-			table.insert(
-				keypointsTable,
-				constructorFunction(
-					1,
-					lerpFunction(lastKeypoint.Value, value, alpha)
-				)
-			)
-
-			break
+				break
+			end
 		end
 	end
 
-	-- Safety fallback.
-	if #keypointsTable == 0 then
-		local firstKeypoint = keypoints[1]
+	--------------------------------------------------
+	-- Visible points
+	--------------------------------------------------
 
-		if firstKeypoint then
-			table.insert(
-				keypointsTable,
-				constructorFunction(0, firstKeypoint.Value)
-			)
+	for _, keypoint in keypoints do
+		if keypoint.Time > startTime
+			and keypoint.Time < endTime then
 
 			table.insert(
-				keypointsTable,
-				constructorFunction(1, firstKeypoint.Value)
+				result,
+				constructorFunction(
+					keypoint.Time - startTime,
+					keypoint.Value
+				)
 			)
 		end
 	end
 
-	return keypointsTable
+	--------------------------------------------------
+	-- Find last visible point
+	--------------------------------------------------
+
+	if endTime >= last.Time then
+		table.insert(
+			result,
+			constructorFunction(
+				1,
+				last.Value
+			)
+		)
+	else
+		for i = 2, #keypoints do
+			local previous = keypoints[i - 1]
+			local current = keypoints[i]
+
+			if endTime >= previous.Time
+				and endTime <= current.Time then
+
+				local alpha =
+					(endTime - previous.Time)
+					/ (current.Time - previous.Time)
+
+				table.insert(
+					result,
+					constructorFunction(
+						1,
+						lerpFunction(
+							previous.Value,
+							current.Value,
+							alpha
+						)
+					)
+				)
+
+				break
+			end
+		end
+	end
+
+	return result
 end
 
-function UIGradientPlus.new(
-	properties: UIGradientPlusProps,
-	parent: Instance?
-): UIGradientPlus
+--------------------------------------------------
+-- Constructor
+--------------------------------------------------
 
+function UIGradientPlus.new(
+	properties: UIGradientPlusProps?,
+	parent: Instance?
+)
 	properties = properties or {}
 
-	-- Apply defaults without overwriting explicit false/0 values.
 	for propertyName, propertyValue in defaults.UIGradientPlus do
 		if properties[propertyName] == nil then
 			properties[propertyName] = propertyValue
 		end
 	end
 
-	local scaleValue = math.max(properties.scaleValue, 0.0001)
+	local scaleValue =
+		math.max(properties.scaleValue, 0.0001)
+
+	local gradient = Instance.new("UIGradient")
 
 	local self = {
-		UIGradient = Instance.new("UIGradient"),
-
-		offsetValue = properties.offsetValue,
-		scaleValue = scaleValue,
-
-		_lastOffsetValue = properties.offsetValue - 1,
-
-		looped = properties.looped,
+		UIGradient = gradient,
 
 		colorKeypoints = readKeypoints(
 			properties.colorKeypoints,
-			scaleValue,
-			properties.looped
+			scaleValue
 		),
 
 		transparencyKeypoints = readKeypoints(
 			properties.transparencyKeypoints,
-			scaleValue,
-			properties.looped
+			scaleValue
 		),
+
+		offsetValue = properties.offsetValue,
+		scaleValue = scaleValue,
+
+		looped = properties.looped,
 
 		activeAnimations = {},
 		removingAnimations = {},
+
+		Rotation = properties.Rotation,
+		Enabled = properties.Enabled,
+
+		Archivable = properties.Archivable ~= false,
+		Name = properties.Name,
 	}
 
-	-- Apply actual UIGradient properties.
-	for propertyName, propertyValue in properties do
-		if pcall(function()
-			local _ = self.UIGradient[propertyName]
-		end) then
-			self.UIGradient[propertyName] = propertyValue
-		end
+	--------------------------------------------------
+	-- Initial UIGradient properties
+	--------------------------------------------------
+
+	gradient.Name = self.Name
+	gradient.Enabled = self.Enabled
+	gradient.Rotation = self.Rotation
+	gradient.Archivable = self.Archivable
+
+	gradient.Parent = parent
+
+	--------------------------------------------------
+	-- Initial gradient
+	--------------------------------------------------
+
+	local colors = processKeypoints(
+		self.colorKeypoints,
+		self.offsetValue,
+		lerpColor,
+		ColorSequenceKeypoint.new
+	)
+
+	local transparency = processKeypoints(
+		self.transparencyKeypoints,
+		self.offsetValue,
+		lerpNumber,
+		NumberSequenceKeypoint.new
+	)
+
+	if #colors >= 2 then
+		gradient.Color = ColorSequence.new(colors)
 	end
 
-	self.UIGradient.Parent = parent
+	if #transparency >= 2 then
+		gradient.Transparency =
+			NumberSequence.new(transparency)
+	end
 
-	local proxy = setmetatable({}, {
+	local proxy
+
+	proxy = setmetatable({}, {
 		__index = function(_, key)
-			return UIGradientPlus[key]
-				or self[key]
-				or self.UIGradient[key]
+			if UIGradientPlus[key] then
+				return UIGradientPlus[key]
+			end
+
+			if self[key] ~= nil then
+				return self[key]
+			end
+
+			return gradient[key]
 		end,
 
 		__newindex = function(_, key, value)
 			if self[key] ~= nil then
 				self[key] = value
 
-			elseif defaults.UIGradientPlus[key] ~= nil then
-				self.UIGradient[key] = value
-
-				if key == "offsetValue" then
-					self._lastOffsetValue = value - 1
+				if key == "Rotation" then
+					gradient.Rotation = value
+				elseif key == "Enabled" then
+					gradient.Enabled = value
+				elseif key == "Name" then
+					gradient.Name = value
+				elseif key == "Archivable" then
+					gradient.Archivable = value
 				end
 
-			else
-				rawset(self, key, value)
+				return
 			end
+
+			if key == "offsetValue" then
+				self.offsetValue = value
+				return
+			end
+
+			if key == "scaleValue" then
+				self.scaleValue = math.max(value, 0.0001)
+				return
+			end
+
+			gradient[key] = value
 		end,
 
 		__type = "UIGradientPlus",
@@ -402,59 +421,107 @@ function UIGradientPlus.new(
 	return proxy
 end
 
+--------------------------------------------------
+-- Update
+--------------------------------------------------
+
 function UIGradientPlus:UpdateGradient(deltaTime: number)
 
+	if not self.Enabled then
+		return
+	end
+
+	--------------------------------------------------
+	-- Animations
+	--------------------------------------------------
+
 	for animation, enabled in self.activeAnimations do
+
 		if enabled then
 
-			-- Advance animation first.
-			animation.progress += animation.speed * deltaTime
+			animation.progress +=
+				animation.speed * deltaTime
 
-			-- Handle completed animations.
-			if animation.progress >= 1 then
+			--------------------------------------------------
+			-- Duration
+			--------------------------------------------------
 
-				if self.removingAnimations[animation] then
-					self.activeAnimations[animation] = nil
-					self.removingAnimations[animation] = nil
+			if animation.duration > 0
+				and animation.progress >= animation.duration then
 
-					continue
-				end
+				self.activeAnimations[animation] = nil
+				animation.stopped = true
 
-				animation.progress %= 1
+				continue
 			end
 
-			-- Calculate easing before applying the animation.
-			animation.alpha = TweenService:GetValue(
-				animation.progress,
-				animation.easingStyle,
-				animation.easingDirection
-			)
+			--------------------------------------------------
+			-- Loop animation
+			--------------------------------------------------
 
-			-- Apply animation.
-			local animationFunction = UIGradientPlus[animation.animationType]
+			if animation.animationType == "Loop" then
 
-			if animationFunction then
-				animationFunction(self, animation)
+				animation.alpha =
+					TweenService:GetValue(
+						animation.progress % 1,
+						animation.easingStyle,
+						animation.easingDirection
+					)
+
+				self:Loop(animation)
+
+			elseif animation.animationType == "Scroll" then
+
+				animation.alpha =
+					TweenService:GetValue(
+						animation.progress % 1,
+						animation.easingStyle,
+						animation.easingDirection
+					)
+
+				self:Scroll(animation)
+
+			elseif animation.animationType == "Rotate" then
+
+				animation.alpha =
+					TweenService:GetValue(
+						animation.progress % 1,
+						animation.easingStyle,
+						animation.easingDirection
+					)
+
+				self:Rotate(animation)
 			end
 		end
 	end
 
-	-- Only rebuild the ColorSequence when offset changed.
+	--------------------------------------------------
+	-- Keep Rotation synced
+	--------------------------------------------------
+
+	self.UIGradient.Rotation = self.Rotation
+
+	--------------------------------------------------
+	-- Update visual gradient
+	--------------------------------------------------
+
 	if self._lastOffsetValue ~= self.offsetValue then
 
-		local actualColorKeypoints = processKeypoints(
-			self.colorKeypoints,
-			self.offsetValue,
-			lerpColor,
-			ColorSequenceKeypoint.new
-		)
+		local actualColorKeypoints =
+			processKeypoints(
+				self.colorKeypoints,
+				self.offsetValue,
+				lerpColor,
+				ColorSequenceKeypoint.new
+			)
 
-		local actualTransparencyKeypoints = processKeypoints(
-			self.transparencyKeypoints,
-			self.offsetValue,
-			lerpNumber,
-			NumberSequenceKeypoint.new
-		)
+		local actualTransparencyKeypoints =
+			processKeypoints(
+				self.transparencyKeypoints,
+				self.offsetValue,
+				lerpNumber,
+				NumberSequenceKeypoint.new
+			)
 
 		if #actualColorKeypoints >= 2 then
 			self.UIGradient.Color =
@@ -466,97 +533,152 @@ function UIGradientPlus:UpdateGradient(deltaTime: number)
 				NumberSequence.new(actualTransparencyKeypoints)
 		end
 
-		self._lastOffsetValue = self.offsetValue
+		self._lastOffsetValue =
+			self.offsetValue
 	end
 end
 
+--------------------------------------------------
+-- Keypoint setters
+--------------------------------------------------
+
 function UIGradientPlus:SetColorKeypoints(
-	colorKeypoints: {[number]: number | Color3 | string}
-): UIGradientPlus
+	colorKeypoints
+)
+	self.colorKeypoints =
+		readKeypoints(
+			colorKeypoints,
+			self.scaleValue
+		)
 
-	self.colorKeypoints = readKeypoints(
-		colorKeypoints,
-		self.scaleValue,
-		self.looped
-	)
-
-	self._lastOffsetValue = self.offsetValue - 1
+	self._lastOffsetValue =
+		self.offsetValue - 1
 
 	return self
 end
 
 function UIGradientPlus:SetTransparencyKeypoints(
-	transparencyKeypoints: {[number]: number}
-): UIGradientPlus
+	transparencyKeypoints
+)
+	self.transparencyKeypoints =
+		readKeypoints(
+			transparencyKeypoints,
+			self.scaleValue
+		)
 
-	self.transparencyKeypoints = readKeypoints(
-		transparencyKeypoints,
-		self.scaleValue,
-		self.looped
-	)
-
-	self._lastOffsetValue = self.offsetValue - 1
+	self._lastOffsetValue =
+		self.offsetValue - 1
 
 	return self
 end
 
---[[
-	Scroll the gradient horizontally.
+--------------------------------------------------
+-- LOOP
+--------------------------------------------------
 
-	Linear easing is recommended for seamless continuous motion.
-]]
-function UIGradientPlus:Loop(animation: UIGradientPlusAnimation)
+function UIGradientPlus:Loop(
+	animation: UIGradientPlusAnimation
+)
 
-	local scale = math.max(self.scaleValue, 0.0001)
+	-- ÖNEMLİ:
+	-- Artık keypointleri looplamıyoruz.
+	-- Gradient'in kendi Offset property'sini kullanıyoruz.
 
-	self.offsetValue =
-		(animation.startOffset + animation.alpha * scale)
-		% scale
+	local offset =
+		animation.startOffset
+		+ animation.progress
+
+	self.UIGradient.Offset =
+		Vector2.new(
+			offset % 1,
+			0
+		)
 end
 
--- Alias for a clearer API.
-function UIGradientPlus:Scroll(animation: UIGradientPlusAnimation)
+--------------------------------------------------
+-- SCROLL
+--------------------------------------------------
+
+function UIGradientPlus:Scroll(
+	animation: UIGradientPlusAnimation
+)
 	self:Loop(animation)
 end
 
-function UIGradientPlus:Rotate(animation: UIGradientPlusAnimation)
+--------------------------------------------------
+-- ROTATE
+--------------------------------------------------
+
+function UIGradientPlus:Rotate(
+	animation: UIGradientPlusAnimation
+)
 
 	self.Rotation =
-		(animation.startRotation + animation.alpha * 360)
-		% 360
+		(
+			animation.startRotation
+			+ animation.progress * 360
+		) % 360
+
+	self.UIGradient.Rotation =
+		self.Rotation
 end
+
+--------------------------------------------------
+-- Apply Animation
+--------------------------------------------------
 
 function UIGradientPlus:ApplyAnimation(
 	properties: UIGradientPlusAnimationProps?,
 	animation: UIGradientPlusAnimation?
-): UIGradientPlusAnimation
+)
 
 	if not animation then
 
 		properties = properties or {}
 
-		for propertyName, propertyValue in defaults.UIGradientPlusAnimation do
+		for propertyName, propertyValue
+			in defaults.UIGradientPlusAnimation do
+
 			if properties[propertyName] == nil then
-				properties[propertyName] = propertyValue
+				properties[propertyName] =
+					propertyValue
 			end
 		end
 
 		animation = {
-			animationType = properties.animationType,
 
-			speed = properties.speed,
-			duration = properties.duration,
+			animationType =
+				properties.animationType,
 
-			easingSpeed = properties.easingSpeed,
-			easingTimes = 1 / math.max(properties.easingSpeed, 0.0001),
+			duration =
+				properties.duration,
 
-			easingStyle = properties.easingStyle,
-			easingDirection = properties.easingDirection,
+			speed =
+				properties.speed,
 
-			startOffset = self.offsetValue,
-			startRotation = self.Rotation,
+			easingSpeed =
+				properties.easingSpeed,
+
+			easingTimes =
+				1 / math.max(
+					properties.easingSpeed,
+					0.0001
+				),
+
+			easingStyle =
+				properties.easingStyle,
+
+			easingDirection =
+				properties.easingDirection,
+
+			startOffset =
+				self.offsetValue,
+
+			startRotation =
+				self.Rotation,
 
 			progress = 0,
+
 			alpha = 0,
 
 			stopped = false,
@@ -568,30 +690,39 @@ function UIGradientPlus:ApplyAnimation(
 	self.activeAnimations[animation] = true
 	self.removingAnimations[animation] = nil
 
+	--------------------------------------------------
+	-- Duration
+	--------------------------------------------------
+
 	if animation.duration > 0 then
 
-		local currentAnimation = animation
+		local currentAnimation =
+			animation
 
-		task.delay(animation.duration, function()
+		task.delay(
+			animation.duration,
+			function()
 
-			-- Don't stop a newer animation using the same object.
-			if self.activeAnimations[currentAnimation] then
-				self.activeAnimations[currentAnimation] = nil
-				self.removingAnimations[currentAnimation] = nil
+				if self.activeAnimations[currentAnimation] then
 
-				currentAnimation.stopped = true
+					self.activeAnimations[currentAnimation] = nil
+
+					currentAnimation.stopped = true
+				end
 			end
-		end)
+		)
 	end
 
-	-- Return the actual animation object.
-	-- This is important for PauseAnimation/ResumeAnimation.
 	return animation
 end
 
+--------------------------------------------------
+-- Pause
+--------------------------------------------------
+
 function UIGradientPlus:PauseAnimation(
-	animation: UIGradientPlusAnimation
-): UIGradientPlus
+	animation
+)
 
 	if self.activeAnimations[animation] ~= nil then
 		self.activeAnimations[animation] = false
@@ -600,9 +731,13 @@ function UIGradientPlus:PauseAnimation(
 	return self
 end
 
+--------------------------------------------------
+-- Resume
+--------------------------------------------------
+
 function UIGradientPlus:ResumeAnimation(
-	animation: UIGradientPlusAnimation
-): UIGradientPlus
+	animation
+)
 
 	if self.activeAnimations[animation] ~= nil then
 		self.activeAnimations[animation] = true
@@ -611,10 +746,14 @@ function UIGradientPlus:ResumeAnimation(
 	return self
 end
 
+--------------------------------------------------
+-- Remove
+--------------------------------------------------
+
 function UIGradientPlus:RemoveAnimation(
-	animation: UIGradientPlusAnimation,
-	completeFirst: boolean?
-): UIGradientPlus
+	animation,
+	completeFirst
+)
 
 	if completeFirst then
 		self.removingAnimations[animation] = true
@@ -626,29 +765,82 @@ function UIGradientPlus:RemoveAnimation(
 	return self
 end
 
+--------------------------------------------------
+-- Destroy
+--------------------------------------------------
+
 function UIGradientPlus:Destroy()
 
 	activeGradients[self] = nil
 
+	table.clear(self.activeAnimations)
+	table.clear(self.removingAnimations)
+
 	if self.UIGradient then
 		self.UIGradient:Destroy()
 	end
-
-	table.clear(self.activeAnimations)
-	table.clear(self.removingAnimations)
-	table.clear(self.colorKeypoints)
-	table.clear(self.transparencyKeypoints)
-
-	table.clear(self)
-
-	setmetatable(self, nil)
 end
 
-RunService.PostSimulation:Connect(function(deltaTime)
+--------------------------------------------------
+-- Global update
+--------------------------------------------------
 
-	for gradient in activeGradients do
-		gradient:UpdateGradient(deltaTime)
+RunService.PostSimulation:Connect(
+	function(deltaTime)
+
+		for gradient in activeGradients do
+
+			if gradient.UIGradient
+				and gradient.UIGradient.Parent then
+
+				gradient:UpdateGradient(deltaTime)
+
+			else
+				activeGradients[gradient] = nil
+			end
+		end
 	end
-end)
+)
 
 return UIGradientPlus
+```
+
+### Kullanımı
+
+Senin gradient artık şöyle kalabilir:
+
+```lua
+local Test = GradientAnimations.new({
+	colorKeypoints = {
+		{0, Color3.fromRGB(255, 226, 60)},
+		{0.5, Color3.fromRGB(255, 251, 202)},
+		{1, Color3.fromRGB(126, 255, 240)},
+	},
+
+	scaleValue = 1,
+	offsetValue = 0,
+
+	looped = false,
+
+	Rotation = 0,
+	Enabled = true,
+	Name = "UIGradient",
+}, pill)
+```
+
+Ve animasyon:
+
+```lua
+Test:ApplyAnimation({
+	animationType = "Loop",
+	speed = 0.25,
+	easingStyle = Enum.EasingStyle.Linear,
+	easingDirection = Enum.EasingDirection.In,
+})
+```
+
+**Önemli nokta:** Burada `looped = false` bırakabilirsin. Artık animasyonun çalışması `looped` değerine bağlı değil.
+
+Bir de önceki sistemdeki en büyük görsel problemi kaldırdık: **renk keypointlerini `-1 → 0 → 1 → 2` şeklinde kopyalamıyoruz.** Dolayısıyla senin sarı → beyaz → cyan gradient'in Studio'da gördüğün temiz hali korunuyor.
+
+Ancak burada bir sonraki iyileştirme olarak `Loop` için **gerçek seamless wrap** yapmamız gerekebilir; yani `Offset` 1'den 0'a döndüğü anda gözle görülür bir sıçrama olmamasını sağlayabiliriz. Bu, gradient'in tasarımına göre yapılmalı.
