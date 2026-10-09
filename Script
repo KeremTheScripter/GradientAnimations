@@ -1,4 +1,4 @@
-```lua
+
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
@@ -623,10 +623,6 @@ function UIGradientPlus:Rotate(
 		self.Rotation
 end
 
---------------------------------------------------
--- Apply Animation
---------------------------------------------------
-
 function UIGradientPlus:ApplyAnimation(
 	properties: UIGradientPlusAnimationProps?,
 	animation: UIGradientPlusAnimation?
@@ -690,10 +686,6 @@ function UIGradientPlus:ApplyAnimation(
 	self.activeAnimations[animation] = true
 	self.removingAnimations[animation] = nil
 
-	--------------------------------------------------
-	-- Duration
-	--------------------------------------------------
-
 	if animation.duration > 0 then
 
 		local currentAnimation =
@@ -716,10 +708,6 @@ function UIGradientPlus:ApplyAnimation(
 	return animation
 end
 
---------------------------------------------------
--- Pause
---------------------------------------------------
-
 function UIGradientPlus:PauseAnimation(
 	animation
 )
@@ -731,10 +719,6 @@ function UIGradientPlus:PauseAnimation(
 	return self
 end
 
---------------------------------------------------
--- Resume
---------------------------------------------------
-
 function UIGradientPlus:ResumeAnimation(
 	animation
 )
@@ -745,10 +729,6 @@ function UIGradientPlus:ResumeAnimation(
 
 	return self
 end
-
---------------------------------------------------
--- Remove
---------------------------------------------------
 
 function UIGradientPlus:RemoveAnimation(
 	animation,
@@ -765,10 +745,6 @@ function UIGradientPlus:RemoveAnimation(
 	return self
 end
 
---------------------------------------------------
--- Destroy
---------------------------------------------------
-
 function UIGradientPlus:Destroy()
 
 	activeGradients[self] = nil
@@ -780,10 +756,6 @@ function UIGradientPlus:Destroy()
 		self.UIGradient:Destroy()
 	end
 end
-
---------------------------------------------------
--- Global update
---------------------------------------------------
 
 RunService.PostSimulation:Connect(
 	function(deltaTime)
@@ -803,44 +775,3 @@ RunService.PostSimulation:Connect(
 )
 
 return UIGradientPlus
-```
-
-### Kullanımı
-
-Senin gradient artık şöyle kalabilir:
-
-```lua
-local Test = GradientAnimations.new({
-	colorKeypoints = {
-		{0, Color3.fromRGB(255, 226, 60)},
-		{0.5, Color3.fromRGB(255, 251, 202)},
-		{1, Color3.fromRGB(126, 255, 240)},
-	},
-
-	scaleValue = 1,
-	offsetValue = 0,
-
-	looped = false,
-
-	Rotation = 0,
-	Enabled = true,
-	Name = "UIGradient",
-}, pill)
-```
-
-Ve animasyon:
-
-```lua
-Test:ApplyAnimation({
-	animationType = "Loop",
-	speed = 0.25,
-	easingStyle = Enum.EasingStyle.Linear,
-	easingDirection = Enum.EasingDirection.In,
-})
-```
-
-**Önemli nokta:** Burada `looped = false` bırakabilirsin. Artık animasyonun çalışması `looped` değerine bağlı değil.
-
-Bir de önceki sistemdeki en büyük görsel problemi kaldırdık: **renk keypointlerini `-1 → 0 → 1 → 2` şeklinde kopyalamıyoruz.** Dolayısıyla senin sarı → beyaz → cyan gradient'in Studio'da gördüğün temiz hali korunuyor.
-
-Ancak burada bir sonraki iyileştirme olarak `Loop` için **gerçek seamless wrap** yapmamız gerekebilir; yani `Offset` 1'den 0'a döndüğü anda gözle görülür bir sıçrama olmamasını sağlayabiliriz. Bu, gradient'in tasarımına göre yapılmalı.
